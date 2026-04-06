@@ -1,366 +1,192 @@
-"""
-╔══════════════════════════════════════════════════════╗
-║         Discord Donation Bot  –  by Claude           ║
-║  PromptPay QR  |  TrueMoney Wallet  |  Leaderboard  ║
-╚══════════════════════════════════════════════════════╝
-"""
-
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os
-import json
-import datetime
-import qrcode
-import io
-from dotenv import load_dotenv
+import yt_dlp
+import asyncio
+import static_ffmpeg
+import os  # เพิ่มเพื่อดึงค่าจาก Environment Variables
+from datetime import datetime, timedelta
 
-load_dotenv()
+# --- [ตั้งค่า ID ทั้งหมด] ---
+# สำหรับ Railway: แนะนำให้ใส่ TOKEN ในหน้า Config Variables ของ Railway 
+# แล้วใช้ os.getenv('TOKEN') แทนการแปะลงไปตรงๆ ในโค้ด
+TOKEN = os.getenv('TOKEN') or 'ใส่_TOKEN_เดิม_ตรงนี้_ถ้ายังไม่เอาลง_Railway'
 
-# ╔══════════════════════════════════════════════════╗
-# ║                    CONFIG                        ║
-# ╚══════════════════════════════════════════════════╝
-TOKEN               = os.getenv("DISCORD_TOKEN")
-OWNER_ID            = int(os.getenv("OWNER_ID", "0"))
-PROMPTPAY_NUMBER    = os.getenv("PROMPTPAY_NUMBER", "0812345678")
-TRUEMONEY_NUMBER    = os.getenv("TRUEMONEY_NUMBER", "0812345678")
-TRUEMONEY_NAME      = os.getenv("TRUEMONEY_NAME", "ชื่อ นามสกุล")
-LOG_FILE            = "donations.json"
+MY_GUILD_ID = discord.Object(id=1470028388335882394)
+TARGET_CATEGORY_ID = 1482303742866100315 
+BLACKLIST_ROLE_ID = 1482330184395788331 
+LOG_CHANNEL_ID = 1483080342528196681
+UNBAN_CHANNEL_ID = 1482347205107908730  
 
-# ── สีธีม ──────────────────────────────────────────
-COLOR_DONATE   = 0xFF69B4
-COLOR_CONFIRM  = 0xFFD700
-COLOR_BOARD    = 0x5865F2
-COLOR_OWNER_DM = 0x00FF88
-COLOR_INFO     = 0x36393F
+# --- [ตั้งค่าระบบเพลง] ---
+YDL_OPTIONS = {'format': 'bestaudio/best', 'noplaylist': True, 'quiet': True, 'no_warnings': True, 'default_search': 'ytsearch', 'source_address': '0.0.0.0'}
+FFMPEG_OPTIONS = {'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 'options': '-vn'}
 
+class MusicBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.all()
+        super().__init__(command_prefix="!", intents=intents)
+        self.warnings = {} 
+        self.queue = {}    
+        self.voice_log_id = None
+        self.server_log_id = None
 
-# ╔══════════════════════════════════════════════════╗
-# ║                   HELPERS                        ║
-# ╚══════════════════════════════════════════════════╝
+    async def setup_hook(self):
+        static_ffmpeg.add_paths()
+        self.tree.copy_global_to(guild=MY_GUILD_ID)
+        await self.tree.sync(guild=MY_GUILD_ID)
+        print(f"✅ บอทออนไลน์สมบูรณ์แบบ 100% พร้อมระบบ Log!")
 
-def load_donations() -> dict:
-    if os.path.exists(LOG_FILE):
-        with open(LOG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {"donations": [], "total": 0}
+bot = MusicBot()
 
+# --- [1. คำสั่งตั้งค่าระบบ Log] ---
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setvoice(ctx, channel: discord.TextChannel):
+    bot.voice_log_id = channel.id
+    await ctx.send(f"✅ ตั้งค่าห้อง Log เสียงไปที่ {channel.mention}")
 
-def save_donations(data: dict):
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setlog(ctx, channel: discord.TextChannel):
+    bot.server_log_id = channel.id
+    await ctx.send(f"✅ ตั้งค่าห้อง Log เซิร์ฟเวอร์ไปที่ {channel.mention}")
 
-
-def build_promptpay_payload(number: str, amount: float) -> str:
-    """สร้าง EMVCo PromptPay payload พร้อม CRC-16"""
-    number = number.replace("-", "").replace(" ", "")
-    if len(number) == 10 and number.startswith("0"):
-        number = "0066" + number[1:]
-
-    amount_str = f"{amount:.2f}"
-
-    def crc16(data: str) -> str:
-        crc = 0xFFFF
-        for byte in data.encode("ascii"):
-            crc ^= byte << 8
-            for _ in range(8):
-                crc = (crc << 1) ^ 0x1021 if crc & 0x8000 else crc << 1
-        return format(crc & 0xFFFF, "04X")
-
-    def tlv(tag: str, value: str) -> str:
-        return f"{tag}{len(value):02d}{value}"
-
-    aid      = tlv("00", "A000000677010111")
-    mobile   = tlv("01", number)
-    merchant = tlv("29", aid + mobile)
-    payload  = (
-        tlv("00", "01")
-        + tlv("01", "12")
-        + merchant
-        + tlv("53", "764")
-        + tlv("54", amount_str)
-        + tlv("58", "TH")
-        + "6304"
-    )
-    return payload + crc16(payload)
-
-
-def generate_promptpay_qr(amount: float) -> discord.File:
-    payload = build_promptpay_payload(PROMPTPAY_NUMBER, amount)
-    img = qrcode.make(payload)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return discord.File(buf, filename="promptpay_qr.png")
-
-
-def truemoney_link(amount: float) -> str:
-    number = TRUEMONEY_NUMBER.replace("-", "").replace(" ", "")
-    return f"https://tmn.app.link/transfer?mobile={number}&amount={amount:.2f}"
-
-
-# ╔══════════════════════════════════════════════════╗
-# ║                     BOT                          ║
-# ╚══════════════════════════════════════════════════╝
-
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
-bot  = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
-
-
-async def notify_owner(embed: discord.Embed):
-    """DM แจ้งเจ้าของบอทเมื่อมีโดเนท"""
-    if not OWNER_ID:
-        return
-    try:
-        owner = await bot.fetch_user(OWNER_ID)
-        await owner.send(embed=embed)
-    except Exception:
-        pass
-
-
-# ── Events ───────────────────────────────────────────
+# --- [2. ระบบ Log เหตุการณ์ต่างๆ] ---
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if not bot.voice_log_id: return
+    channel = bot.get_channel(bot.voice_log_id)
+    if not channel: return
+    embed = discord.Embed(timestamp=datetime.now())
+    if before.channel is None and after.channel is not None:
+        embed.title, embed.description, embed.color = "📥 เข้าห้องเสียง", f"**{member}** เข้าห้อง `{after.channel.name}`", discord.Color.green()
+    elif before.channel is not None and after.channel is None:
+        embed.title, embed.description, embed.color = "📤 ออกจากห้องเสียง", f"**{member}** ออกจากห้อง `{before.channel.name}`", discord.Color.red()
+    elif before.channel != after.channel:
+        embed.title, embed.description, embed.color = "🔄 ย้ายห้องเสียง", f"**{member}** ย้ายจาก `{before.channel.name}` ➡️ `{after.channel.name}`", discord.Color.blue()
+    else: return
+    await channel.send(embed=embed)
 
 @bot.event
-async def on_ready():
-    await tree.sync()
-    print(f"✅ บอทออนไลน์: {bot.user} (ID: {bot.user.id})")
-    await bot.change_presence(
-        activity=discord.Activity(
-            type=discord.ActivityType.watching,
-            name="💖 รับโดเนท | /donate"
-        )
-    )
+async def on_message_edit(before, after):
+    if after.author.bot or not bot.server_log_id or before.content == after.content: return
+    channel = bot.get_channel(bot.server_log_id)
+    if not channel: return
+    embed = discord.Embed(title="📝 แก้ไขข้อความ", color=discord.Color.orange(), timestamp=datetime.now())
+    embed.set_author(name=after.author, icon_url=after.author.display_avatar.url)
+    embed.add_field(name="ก่อนแก้ไข", value=before.content or "ไม่มีข้อความ", inline=False)
+    embed.add_field(name="หลังแก้ไข", value=after.content or "ไม่มีข้อความ", inline=False)
+    embed.add_field(name="ห้อง", value=after.channel.mention)
+    await channel.send(embed=embed)
 
+@bot.event
+async def on_member_update(before, after):
+    if before.nick != after.nick and bot.server_log_id:
+        channel = bot.get_channel(bot.server_log_id)
+        if not channel: return
+        embed = discord.Embed(title="👤 เปลี่ยนชื่อเล่น", color=discord.Color.magenta(), timestamp=datetime.now())
+        embed.set_author(name=after, icon_url=after.display_avatar.url)
+        embed.add_field(name="ชื่อเดิม", value=before.nick or before.name)
+        embed.add_field(name="ชื่อใหม่", value=after.nick or after.name)
+        await channel.send(embed=embed)
 
-# ── /donate ──────────────────────────────────────────
+# --- [3. ระบบ Blacklist & Log ลบข้อความ] ---
+@bot.event
+async def on_message(message):
+    if message.author.bot: return
+    if message.channel.category_id == TARGET_CATEGORY_ID:
+        if any(role.id == BLACKLIST_ROLE_ID for role in message.author.roles):
+            try:
+                await message.delete()
+                return
+            except: pass
+    await bot.process_commands(message)
 
-@tree.command(name="donate", description="โดเนทให้เซิร์ฟเวอร์ 💖 รองรับ PromptPay & TrueMoney")
-@app_commands.describe(
-    amount  = "จำนวนเงินที่ต้องการโดเนท (บาท)",
-    method  = "ช่องทางการชำระเงิน",
-    message = "ข้อความที่อยากฝากถึงเจ้าของ (ไม่บังคับ)",
-)
-@app_commands.choices(method=[
-    app_commands.Choice(name="💳 PromptPay (สแกน QR)", value="promptpay"),
-    app_commands.Choice(name="🧡 TrueMoney Wallet",     value="truemoney"),
-])
-async def donate(
-    interaction: discord.Interaction,
-    amount: float,
-    method: str = "promptpay",
-    message: str = "",
-):
-    if amount <= 0:
-        await interaction.response.send_message("❌ จำนวนเงินต้องมากกว่า 0 บาท", ephemeral=True)
-        return
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot: return
+    if bot.server_log_id:
+        log_ch = bot.get_channel(bot.server_log_id)
+        if log_ch:
+            embed = discord.Embed(title="🗑️ ลบข้อความ", color=discord.Color.red(), timestamp=datetime.now())
+            embed.set_author(name=message.author, icon_url=message.author.display_avatar.url)
+            embed.description = f"**เนื้อหา:** {message.content or 'ไม่มีข้อความ'}\n**ห้อง:** {message.channel.mention}"
+            await log_ch.send(embed=embed)
 
-    await interaction.response.defer(ephemeral=True)
+    if message.channel.category_id == TARGET_CATEGORY_ID:
+        if any(role.id == BLACKLIST_ROLE_ID for role in message.author.roles): return
+        uid, now = message.author.id, datetime.now()
+        if uid in bot.warnings and now - bot.warnings[uid]['last_time'] > timedelta(hours=1):
+            bot.warnings[uid] = {'count': 0, 'last_time': now}
+        if uid not in bot.warnings:
+            bot.warnings[uid] = {'count': 1, 'last_time': now}
+        else:
+            bot.warnings[uid]['count'] += 1
+            bot.warnings[uid]['last_time'] = now
 
-    if method == "promptpay":
-        qr_file = generate_promptpay_qr(amount)
-        embed = discord.Embed(
-            title="💳 โดเนทผ่าน PromptPay",
-            description=(
-                f"**จำนวน:** `{amount:,.2f}` บาท\n"
-                f"**PromptPay:** `{PROMPTPAY_NUMBER}`\n\n"
-                f"📱 สแกน QR Code ด้านล่างได้เลยครับ\n"
-                + (f"\n💬 *{message}*" if message else "")
-            ),
-            color=COLOR_DONATE,
-            timestamp=datetime.datetime.utcnow(),
-        )
-        embed.set_image(url="attachment://promptpay_qr.png")
-        embed.set_footer(text="หลังโอนแล้ว ใช้ /confirm เพื่อแจ้งยืนยันด้วยนะครับ 🙏")
-        await interaction.followup.send(embed=embed, file=qr_file, ephemeral=True)
+        count = bot.warnings[uid]['count']
+        if count == 1:
+            await message.channel.send(f"⚠️ {message.author.mention} **อย่าลบข้อความตอนประมูล!** (เตือนครั้งที่ 1/2)", delete_after=15)
+        elif count >= 2:
+            role = message.guild.get_role(BLACKLIST_ROLE_ID)
+            if role:
+                try:
+                    await message.author.add_roles(role)
+                    bot.warnings[uid]['count'] = 0 
+                    log_black = bot.get_channel(LOG_CHANNEL_ID)
+                    if log_black:
+                        embed = discord.Embed(title="🚫 ประกาศ Blacklist", description=f"สมาชิก {message.author.mention} ทำผิดกฎการลบข้อความประมูล", color=0xff0000, timestamp=now)
+                        embed.set_thumbnail(url=message.author.display_avatar.url)
+                        embed.add_field(name="📌 สาเหตุ", value="ลบข้อความในห้องประมูล (2/2)", inline=False)
+                        embed.add_field(name="🔓 การปลด", value=f"ติดต่อที่ <#{UNBAN_CHANNEL_ID}>", inline=True)
+                        view = discord.ui.View()
+                        view.add_item(discord.ui.Button(label="ไปที่ห้องปลด Blacklist", url=f"https://discord.com/channels/{message.guild.id}/{UNBAN_CHANNEL_ID}"))
+                        await log_black.send(embed=embed, view=view)
+                except: pass
 
-    else:  # TrueMoney
-        tmn_link = truemoney_link(amount)
-        embed = discord.Embed(
-            title="🧡 โดเนทผ่าน TrueMoney Wallet",
-            description=(
-                f"**จำนวน:** `{amount:,.2f}` บาท\n"
-                f"**เบอร์:** `{TRUEMONEY_NUMBER}`\n"
-                f"**ชื่อบัญชี:** {TRUEMONEY_NAME}\n\n"
-                f"👉 กด **[เปิดแอป TrueMoney]({tmn_link})** หรือโอนหาเบอร์ด้านบนได้เลยครับ\n"
-                + (f"\n💬 *{message}*" if message else "")
-            ),
-            color=0xFF6600,
-            timestamp=datetime.datetime.utcnow(),
-        )
-        embed.set_footer(text="หลังโอนแล้ว ใช้ /confirm เพื่อแจ้งยืนยันด้วยนะครับ 🙏")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+# --- [4. ระบบเพลง] ---
+async def play_next(interaction):
+    gid = interaction.guild_id
+    if gid in bot.queue and bot.queue[gid]:
+        song = bot.queue[gid].pop(0)
+        vc = interaction.guild.voice_client
+        if vc:
+            source = await discord.FFmpegOpusAudio.from_probe(song['url'], **FFMPEG_OPTIONS)
+            vc.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(interaction), bot.loop))
+            await interaction.channel.send(f"🎶 เพลงถัดไป: **{song['title']}**")
 
-
-# ── /confirm ─────────────────────────────────────────
-
-@tree.command(name="confirm", description="แจ้งยืนยันการโดเนทหลังโอนเงินแล้ว ✅")
-@app_commands.describe(
-    amount  = "จำนวนเงินที่โอน (บาท)",
-    method  = "ช่องทางที่ใช้โอน",
-    slip    = "แนบสลิปการโอน (ไม่บังคับ)",
-    message = "ข้อความถึงเจ้าของ",
-)
-@app_commands.choices(method=[
-    app_commands.Choice(name="💳 PromptPay", value="PromptPay"),
-    app_commands.Choice(name="🧡 TrueMoney", value="TrueMoney"),
-])
-async def confirm(
-    interaction: discord.Interaction,
-    amount: float,
-    method: str = "PromptPay",
-    slip: discord.Attachment = None,
-    message: str = "",
-):
-    if amount <= 0:
-        await interaction.response.send_message("❌ จำนวนเงินต้องมากกว่า 0 บาท", ephemeral=True)
-        return
-
+@bot.tree.command(name="play", description="เล่นเพลงจาก YouTube")
+async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
+    if not interaction.user.voice: return await interaction.followup.send("❌ เข้าห้องเสียงก่อนนะ!")
+    vc = interaction.guild.voice_client or await interaction.user.voice.channel.connect(self_deaf=True)
+    with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
+        try:
+            info = ydl.extract_info(search, download=False)
+            if 'entries' in info: info = info['entries'][0]
+            url, title = info['url'], info['title']
+        except Exception: return await interaction.followup.send(f"❌ หาเพลงไม่เจอ")
+    source = await discord.FFmpegOpusAudio.from_probe(url, **FFMPEG_OPTIONS)
+    if vc.is_playing():
+        bot.queue.setdefault(interaction.guild_id, []).append({'url': url, 'title': title})
+        await interaction.followup.send(f"➕ เพิ่มเข้าคิว: **{title}**")
+    else:
+        vc.play(source, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(interaction), bot.loop))
+        await interaction.followup.send(f"▶️ กำลังเล่น: **{title}**")
 
-    data = load_donations()
-    record = {
-        "user_id":   interaction.user.id,
-        "user_name": str(interaction.user),
-        "amount":    amount,
-        "method":    method,
-        "message":   message,
-        "slip_url":  slip.url if slip else None,
-        "timestamp": datetime.datetime.utcnow().isoformat(),
-    }
-    data["donations"].append(record)
-    data["total"] = round(data["total"] + amount, 2)
-    save_donations(data)
+@bot.tree.command(name="skip", description="ข้ามเพลง")
+async def skip(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc and vc.is_playing(): vc.stop(); await interaction.response.send_message("⏭️ ข้ามเพลงเรียบร้อย")
+    else: await interaction.response.send_message("❌ ไม่มีเพลงเล่นอยู่")
 
-    method_icon = "💳" if method == "PromptPay" else "🧡"
+@bot.tree.command(name="stop", description="หยุดเพลงและล้างคิว")
+async def stop(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if vc:
+        await vc.disconnect(); bot.queue[interaction.guild_id] = []
+        await interaction.response.send_message("⏹️ ออกจากห้องเสียงแล้ว")
+    else: await interaction.response.send_message("❌ บอทไม่ได้อยู่ในห้องเสียง")
 
-    # Embed สาธารณะ
-    embed = discord.Embed(
-        title="🎉 มีโดเนทเข้ามา!",
-        color=COLOR_CONFIRM,
-        timestamp=datetime.datetime.utcnow(),
-    )
-    embed.set_thumbnail(url=interaction.user.display_avatar.url)
-    embed.add_field(name="👤 ผู้โดเนท",           value=interaction.user.mention,       inline=True)
-    embed.add_field(name="💰 จำนวน",               value=f"`{amount:,.2f}` บาท",          inline=True)
-    embed.add_field(name=f"{method_icon} ช่องทาง", value=method,                          inline=True)
-    embed.add_field(name="📊 รวมทั้งหมด",          value=f"`{data['total']:,.2f}` บาท",   inline=False)
-    if message:
-        embed.add_field(name="💬 ข้อความ", value=message, inline=False)
-    if slip:
-        embed.set_image(url=slip.url)
-    embed.set_footer(text="ขอบคุณมากๆ ครับ/ค่ะ 💖")
-
-    await interaction.followup.send(embed=embed)
-
-    # DM แจ้งเจ้าของ
-    dm_embed = discord.Embed(
-        title=f"💌 โดเนทใหม่! {method_icon}",
-        description=(
-            f"**จาก:** {interaction.user} (`{interaction.user.id}`)\n"
-            f"**จำนวน:** `{amount:,.2f}` บาท\n"
-            f"**ช่องทาง:** {method}\n"
-            f"**ข้อความ:** {message or '-'}\n"
-            f"**สลิป:** {slip.url if slip else 'ไม่มี'}\n"
-            f"**เซิร์ฟเวอร์:** {interaction.guild.name if interaction.guild else 'DM'}\n"
-            f"**ยอดรวม:** `{data['total']:,.2f}` บาท"
-        ),
-        color=COLOR_OWNER_DM,
-        timestamp=datetime.datetime.utcnow(),
-    )
-    await notify_owner(dm_embed)
-
-
-# ── /leaderboard ─────────────────────────────────────
-
-@tree.command(name="leaderboard", description="ดูอันดับผู้โดเนทสูงสุด 🏆")
-async def leaderboard(interaction: discord.Interaction):
-    data      = load_donations()
-    donations = data.get("donations", [])
-
-    totals: dict[int, float] = {}
-    names:  dict[int, str]   = {}
-    for d in donations:
-        uid         = d["user_id"]
-        totals[uid] = round(totals.get(uid, 0) + d["amount"], 2)
-        names[uid]  = d["user_name"]
-
-    sorted_users = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    if not sorted_users:
-        await interaction.response.send_message("ยังไม่มีข้อมูลโดเนทครับ 🥲", ephemeral=True)
-        return
-
-    medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
-    lines  = [
-        f"{medals[i]} **{names[uid]}** — `{total:,.2f}` บาท"
-        for i, (uid, total) in enumerate(sorted_users)
-    ]
-
-    embed = discord.Embed(
-        title       = "🏆 Leaderboard ผู้โดเนท",
-        description = "\n".join(lines),
-        color       = COLOR_BOARD,
-        timestamp   = datetime.datetime.utcnow(),
-    )
-    embed.set_footer(text=f"ยอดรวมทั้งหมด: {data['total']:,.2f} บาท  •  {len(donations)} ครั้ง")
-    await interaction.response.send_message(embed=embed)
-
-
-# ── /donateinfo ───────────────────────────────────────
-
-@tree.command(name="donateinfo", description="ดูสถิติการโดเนทรวม 📊")
-async def donateinfo(interaction: discord.Interaction):
-    data      = load_donations()
-    donations = data.get("donations", [])
-    count     = len(donations)
-    total     = data.get("total", 0)
-    avg       = (total / count) if count else 0
-
-    by_method: dict[str, float] = {}
-    for d in donations:
-        m = d.get("method", "PromptPay")
-        by_method[m] = round(by_method.get(m, 0) + d["amount"], 2)
-
-    embed = discord.Embed(
-        title     = "📊 สถิติการโดเนท",
-        color     = COLOR_INFO,
-        timestamp = datetime.datetime.utcnow(),
-    )
-    embed.add_field(name="💰 ยอดรวมทั้งหมด", value=f"`{total:,.2f}` บาท", inline=True)
-    embed.add_field(name="📝 จำนวนครั้ง",     value=f"`{count}` ครั้ง",   inline=True)
-    embed.add_field(name="📈 เฉลี่ยต่อครั้ง", value=f"`{avg:,.2f}` บาท",  inline=True)
-
-    if by_method:
-        method_lines = "\n".join(
-            f"{'💳' if m == 'PromptPay' else '🧡'} **{m}:** `{v:,.2f}` บาท"
-            for m, v in by_method.items()
-        )
-        embed.add_field(name="🗂️ แยกตามช่องทาง", value=method_lines, inline=False)
-
-    await interaction.response.send_message(embed=embed)
-
-
-# ── /resetdonations ───────────────────────────────────
-
-@tree.command(name="resetdonations", description="[Admin] รีเซ็ตข้อมูลโดเนททั้งหมด")
-async def resetdonations(interaction: discord.Interaction):
-    is_owner = interaction.user.id == OWNER_ID
-    is_admin = (
-        interaction.guild is not None
-        and interaction.user.guild_permissions.administrator
-    )
-    if not (is_owner or is_admin):
-        await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ใช้คำสั่งนี้", ephemeral=True)
-        return
-    save_donations({"donations": [], "total": 0})
-    await interaction.response.send_message("✅ รีเซ็ตข้อมูลโดเนทเรียบร้อยแล้ว", ephemeral=True)
-
-
-# ── Run ───────────────────────────────────────────────
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
+bot.run(TOKEN)

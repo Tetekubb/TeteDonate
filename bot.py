@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 # แล้วใช้ os.getenv('TOKEN') แทนการแปะลงไปตรงๆ ในโค้ด
 TOKEN = os.getenv('TOKEN') or 'ใส่_TOKEN_เดิม_ตรงนี้_ถ้ายังไม่เอาลง_Railway'
 
-MY_GUILD_ID = discord.Object(id=1470028388335882394)
+MY_GUILD_ID = discord.Object(id=1488158555415511152)
 TARGET_CATEGORY_ID = 1482303742866100315 
 BLACKLIST_ROLE_ID = 1482330184395788331 
 LOG_CHANNEL_ID = 1483080342528196681

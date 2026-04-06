@@ -18,7 +18,7 @@ YDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extract_flat': False,
-    # --- [เพิ่มส่วนนี้เข้าไปเพื่อแก้ ERROR Sign in] ---
+    'cookiefile': 'cookies.txt',
     'n_exploit': True,
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'referer': 'https://www.google.com/',

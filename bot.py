@@ -11,23 +11,20 @@ from datetime import datetime, timedelta
 TOKEN = os.getenv('TOKEN')
 
 YDL_OPTIONS = {
-    # เลือกเสียงที่ดีที่สุด ถ้าไม่มีให้เลือกอะไรก็ได้ที่มีเสียง (ครอบคลุมทุกคลิป)
-    'format': 'bestaudio/best', 
+    # เลือกเสียงที่ดีที่สุด (m4a) ถ้าไม่มีให้เอาอะไรก็ได้ที่มีเสียง (ครอบคลุมที่สุด)
+    'format': 'bestaudio[ext=m4a]/bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extract_flat': False,
-    'cookiefile': 'cookies.txt', # ไฟล์ที่คุณ Export มา
-    'n_exploit': True,
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'referer': 'https://www.google.com/',
-    # เพิ่ม 2 บรรทัดนี้เพื่อข้าม Error เรื่อง Format
-    'ignoreerrors': True,
+    'cookiefile': 'cookies.txt',  # ใช้คุกกี้ที่คุณมีอยู่
+    # เพิ่ม 3 บรรทัดนี้เพื่อแก้ปัญหา Format Not Available โดยเฉพาะ
     'youtube_include_dash_manifest': False,
+    'youtube_include_hls_manifest': False,
+    'cachedir': False, # ป้องกันปัญหาไฟล์แคชเก่าค้าง
 }
-
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'

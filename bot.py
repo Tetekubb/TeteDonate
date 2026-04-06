@@ -11,7 +11,8 @@ from datetime import datetime, timedelta
 TOKEN = os.getenv('TOKEN')
 
 YDL_OPTIONS = {
-    'format': 'bestaudio/best',
+    # ปรับฟอร์แมตให้ดึงง่ายขึ้นและเป็นไฟล์เสียงที่ Discord รองรับได้ดี
+    'format': 'bestaudio[ext=m4a]/bestaudio/best',
     'noplaylist': True,
     'quiet': True,
     'no_warnings': True,
@@ -138,7 +139,7 @@ async def check_queue(interaction, last_video_id):
 
 # --- [Slash Commands] ---
 
-@bot.tree.command(name="play", description="เล่นเพลงจาก YouTube พร้อมระบบ Autoplay และ Embed สวยงาม")
+@bot.tree.command(name="play", description="เล่นเพลงจาก Youตูบบบ)
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
     if not interaction.user.voice:

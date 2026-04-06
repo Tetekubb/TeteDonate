@@ -11,18 +11,21 @@ from datetime import datetime, timedelta
 TOKEN = os.getenv('TOKEN')
 
 YDL_OPTIONS = {
-    # ปรับฟอร์แมตให้ดึงง่ายขึ้นและเป็นไฟล์เสียงที่ Discord รองรับได้ดี
-    'format': 'bestaudio[ext=m4a]/bestaudio/best',
+    # เลือกเสียงที่ดีที่สุด ถ้าไม่มีให้เลือกอะไรก็ได้ที่มีเสียง (ครอบคลุมทุกคลิป)
+    'format': 'bestaudio/best', 
     'noplaylist': True,
     'quiet': True,
     'no_warnings': True,
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extract_flat': False,
-    'cookiefile': 'cookies.txt',
+    'cookiefile': 'cookies.txt', # ไฟล์ที่คุณ Export มา
     'n_exploit': True,
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'referer': 'https://www.google.com/',
+    # เพิ่ม 2 บรรทัดนี้เพื่อข้าม Error เรื่อง Format
+    'ignoreerrors': True,
+    'youtube_include_dash_manifest': False,
 }
 
 FFMPEG_OPTIONS = {

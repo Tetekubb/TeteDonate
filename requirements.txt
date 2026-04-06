@@ -2,3 +2,4 @@ discord.py[voice]
 yt-dlp
 static-ffmpeg
 PyNaCl
+pip install -U yt-dlp

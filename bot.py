@@ -18,6 +18,10 @@ YDL_OPTIONS = {
     'default_search': 'ytsearch',
     'source_address': '0.0.0.0',
     'extract_flat': False,
+    # --- [เพิ่มส่วนนี้เข้าไปเพื่อแก้ ERROR Sign in] ---
+    'n_exploit': True,
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'referer': 'https://www.google.com/',
 }
 
 FFMPEG_OPTIONS = {
@@ -221,5 +225,6 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message(embed=discord.Embed(description="⏹️ **หยุดเล่นและออกจากห้องแล้ว!**", color=0xe74c3c))
     else:
         await interaction.response.send_message("❌ บอทไม่ได้อยู่ในห้องเสียง")
+        
 
 bot.run(TOKEN)

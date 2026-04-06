@@ -1,6 +1,4 @@
 discord.py[voice]
-yt-dlp
+yt-dlp>=2025.01.15
 static-ffmpeg
 PyNaCl
-pip install -U yt-dlp
-yt-dlp>=2025.1.15

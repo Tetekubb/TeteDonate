@@ -25,7 +25,8 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
-def format_time(seconds):
+# ฟังก์ชันแปลงเวลาให้สวยงาม [HH:MM:SS]
+def format_duration(seconds):
     return str(timedelta(seconds=seconds)).split('.')[0]
 
 class MusicBot(commands.Bot):
@@ -41,25 +42,27 @@ class MusicBot(commands.Bot):
     async def setup_hook(self):
         static_ffmpeg.add_paths()
         await self.tree.sync()
-        print(f"🚀 บอทเพลงระบบเต็มรูปแบบ (Embed เริ่ด) ออนไลน์แล้ว: {self.user}")
+        print(f"🚀 บอทเพลง Embed สวยเริ่ด ออนไลน์แล้วในชื่อ {self.user}")
 
 bot = MusicBot()
 
-# --- [Helper: สร้าง Embed ดีไซน์หรู] ---
-def create_fancy_embed(song, status_text, color, interaction):
+# --- [Helper Functions: Embed Design] ---
+
+def create_music_embed(song, status_text, color, interaction):
     gid = interaction.guild_id
     vol = bot.volume.get(gid, 1.0)
     
     embed = discord.Embed(
         title=f"{status_text} {song['title']}",
-        url=song.get('original_url', song['url']),
+        url=f"https://www.youtube.com/watch?v={song['id']}",
         color=color
     )
-    # ฟิลด์ข้อมูลตามรูปตัวอย่าง
+    # ดีไซน์ช่องข้อมูลตามรูปตัวอย่าง
     embed.add_field(name="✨ เจ้าของเพลง", value=f"```fix\n{song['uploader']}```", inline=True)
-    embed.add_field(name="⏰ ความยาว", value=f"```yaml\n{format_time(song['duration'])}```", inline=True)
+    embed.add_field(name="⏰ ความยาว", value=f"```yaml\n{format_duration(song['duration'])}```", inline=True)
     embed.add_field(name="👤 เพิ่มเพลงโดย", value=f"@{interaction.user.display_name}", inline=True)
     
+    # ดึงชื่อห้องเสียง
     vc_name = interaction.user.voice.channel.name if interaction.user.voice else "Unknown"
     embed.add_field(name="🔊 ช่องเสียง", value=f"```bash\n# {vc_name}```", inline=True)
     embed.add_field(name="📊 ระดับเสียง", value=f"```python\n{int(vol*100)}%```", inline=True)
@@ -71,7 +74,7 @@ def create_fancy_embed(song, status_text, color, interaction):
     embed.set_footer(text=f"Requested at {datetime.now().strftime('%H:%M:%S')}")
     return embed
 
-# --- [Core Functions จากโค้ดเดิมของคุณ] ---
+# --- [Core Logic: คงเดิมจากที่คุณให้มา] ---
 
 async def get_autoplay_video(video_id):
     with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
@@ -98,13 +101,15 @@ async def play_music(interaction, song):
         coro = check_queue(interaction, song.get('id'))
         asyncio.run_coroutine_threadsafe(coro, bot.loop)
 
-    # ดึงค่าระดับเสียง
+    # ดึงระดับเสียง
     vol = bot.volume.get(guild_id, 1.0)
     source = await discord.FFmpegOpusAudio.from_probe(song['url'], **FFMPEG_OPTIONS)
+    
+    # เล่นแบบปรับเสียงได้
     vc.play(discord.PCMVolumeTransformer(source, volume=vol), after=after_playing)
     
-    # ส่ง Embed แบบสวยเริ่ด
-    embed = create_fancy_embed(song, "🎶 กำลังเล่นเพลง", 0x2ecc71, interaction)
+    # ส่ง Embed ตอนเล่น (สวยๆ)
+    embed = create_music_embed(song, "🎶 กำลังเล่นเพลง", 0x2ecc71, interaction)
     await interaction.channel.send(embed=embed)
 
 async def check_queue(interaction, last_video_id):
@@ -116,19 +121,18 @@ async def check_queue(interaction, last_video_id):
         next_song = bot.queue[guild_id].pop(0)
         await play_music(interaction, next_song)
     elif bot.is_autoplay.get(guild_id, True) and last_video_id:
-        await interaction.channel.send("🔄 *คิวหมดแล้ว กำลังค้นหาเพลงถัดไป (Autoplay)...*")
+        await interaction.channel.send("🔄 *คิวหมดแล้ว กำลังค้นหาเพลงที่เกี่ยวข้อง (Autoplay)...*")
         next_song = await get_autoplay_video(last_video_id)
         if next_song:
             with yt_dlp.YoutubeDL(YDL_OPTIONS) as ydl:
                 info = ydl.extract_info(next_song['url'], download=False)
                 next_song['url'] = info['url']
                 next_song['thumbnail'] = info.get('thumbnail')
-                next_song['original_url'] = info.get('webpage_url')
             await play_music(interaction, next_song)
 
-# --- [Slash Commands] ---
+# --- [Slash Commands: เพิ่มความสวยงามทุกคำสั่ง] ---
 
-@bot.tree.command(name="play", description="เล่นเพลง/เพิ่มเข้าคิว พร้อมระบบ Autoplay และ Embed สวยงาม")
+@bot.tree.command(name="play", description="เล่นเพลงจาก YouTube พร้อม Embed สวยๆ")
 async def play(interaction: discord.Interaction, search: str):
     await interaction.response.defer()
     if not interaction.user.voice:
@@ -142,7 +146,6 @@ async def play(interaction: discord.Interaction, search: str):
             if 'entries' in info: info = info['entries'][0]
             song = {
                 'url': info['url'],
-                'original_url': info.get('webpage_url'),
                 'title': info['title'],
                 'uploader': info.get('uploader', 'ไม่ระบุ'),
                 'duration': info.get('duration', 0),
@@ -154,7 +157,8 @@ async def play(interaction: discord.Interaction, search: str):
 
     if vc.is_playing() or vc.is_paused():
         bot.queue.setdefault(interaction.guild_id, []).append(song)
-        embed = create_fancy_embed(song, "✅ เพิ่มเข้าคิวแล้ว", 0x3498db, interaction)
+        # ส่ง Embed ตอนเพิ่มคิว (สวยๆ)
+        embed = create_music_embed(song, "✅ เพิ่มเข้าคิวแล้ว", 0x3498db, interaction)
         await interaction.followup.send(embed=embed)
     else:
         await interaction.followup.send("🔎 กำลังเตรียมการเล่น...", ephemeral=True)
@@ -169,7 +173,7 @@ async def volume(interaction: discord.Interaction, level: int):
     bot.volume[gid] = level / 100
     vc = interaction.guild.voice_client
     if vc and vc.source:
-        vc.source.volume = level / 100
+        vc.source.volume = level / 100 # ปรับเสียงทันที
     
     embed = discord.Embed(description=f"🔊 **ปรับระดับเสียงเป็น {level}% เรียบร้อย!**", color=0x9b59b6)
     await interaction.response.send_message(embed=embed)
@@ -186,7 +190,7 @@ async def queue(interaction: discord.Interaction):
         desc += f"**{i}.** `{song['title']}` | {song['uploader']}\n"
     embed.description = desc
     if len(q) > 10:
-        embed.set_footer(text=f"และยังมีอีก {len(q)-10} เพลงในคิว")
+        embed.set_footer(text=f"และอีก {len(q)-10} เพลงที่เหลือ...")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="skip", description="ข้ามเพลงปัจจุบัน")
@@ -198,13 +202,13 @@ async def skip(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("❌ ไม่มีเพลงเล่นอยู่")
 
-@bot.tree.command(name="autoplay", description="เปิด/ปิด ระบบ Autoplay")
+@bot.tree.command(name="autoplay", description="เปิด/ปิด ระบบเล่นเพลงต่ออัตโนมัติ")
 async def autoplay(interaction: discord.Interaction):
     gid = interaction.guild_id
     current = bot.is_autoplay.get(gid, True)
     bot.is_autoplay[gid] = not current
     status = "เปิด ✅" if bot.is_autoplay[gid] else "ปิด ❌"
-    await interaction.response.send_message(embed=discord.Embed(description=f"📻 **ระบบ Autoplay ตอนนี้: {status}**", color=0x1abc9c))
+    await interaction.response.send_message(embed=discord.Embed(description=f"📻 ระบบ Autoplay ตอนนี้: **{status}**", color=0x1abc9c))
 
 @bot.tree.command(name="stop", description="หยุดและออกจากห้องเสียง")
 async def stop(interaction: discord.Interaction):
@@ -212,7 +216,7 @@ async def stop(interaction: discord.Interaction):
     if vc:
         bot.queue[interaction.guild_id] = []
         await vc.disconnect()
-        await interaction.response.send_message(embed=discord.Embed(description="⏹️ **หยุดเล่นและล้างคิวเรียบร้อย!**", color=0xe74c3c))
+        await interaction.response.send_message(embed=discord.Embed(description="⏹️ **หยุดเล่นและออกจากห้องแล้ว!**", color=0xe74c3c))
     else:
         await interaction.response.send_message("❌ บอทไม่ได้อยู่ในห้องเสียง")
 
